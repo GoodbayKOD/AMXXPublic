@@ -1,5 +1,6 @@
 #include <amxmodx>
 #include <amxmisc>
+#include <hamsandwich>
 #include <cstrike>
 #include <engine>
 #include <fakemeta>
@@ -14,6 +15,7 @@
 #define g_szPrefix          "[AMXX]"
 
 #define InfoTarget_Class    "info_target"
+#define Button_Class        "func_button"
 #define SupplyBox_Class     "supplybox"
 
 #define TASK_SPAWN          1218148431
@@ -31,7 +33,8 @@ const Float:ICON_SCALE = 1.2;
 
 // Resources
 new const Box_Model[] = "models/gkod/supplybox.mdl";
-new const Box_Sprite[] = "sprites/gkod/icon_supplybox.spr";
+new const Box_Sprite_Icon[] = "sprites/gkod/icon_supplybox.spr";
+new const Box_Sprite_Button[] = "sprites/gkod/e_button.spr";
 new const Box_Sound[] = "gkod/supplybox_pickup.wav";
 
 // Box related
@@ -46,6 +49,7 @@ new g_fBoxAward;
 
 // Cvars
 new Float:g_vSpawnTime;
+new g_vGrabButton;
 
 // Vectors
 new Float:g_vOrigin[3], Float:g_vPlane[3], Float:g_vStart[3], 
@@ -53,7 +57,7 @@ Float:g_vEnd[3], Float:g_vOffset[3], Float:g_vForward[3], Float:g_vGoal[3];
 new g_hTrace;
 
 // Sprite
-new g_pSupplyIcon;
+new g_pSupplyIcon, g_pSupplyButton, g_pLaserBeam;
 
 /*================================================================================
  [Plugin Data]
@@ -69,7 +73,10 @@ public plugin_precache()
     Box_Load();
 
     // Precache resources
-    g_pSupplyIcon = precache_model(Box_Sprite);
+    g_pSupplyIcon   = precache_model(Box_Sprite_Icon);
+    g_pSupplyButton = precache_model(Box_Sprite_Button);
+    g_pLaserBeam    = precache_model("sprites/laserbeam.spr");
+
     precache_model(Box_Model)
     precache_sound(Box_Sound);
 
@@ -80,13 +87,18 @@ public plugin_precache()
 
 public plugin_init()
 {
-    // You change this = you are gay
+    // You change this = you're gay
     register_plugin("SupplyBox", "1.0", "Goodbay");
 
     // Admin cmd
     register_clcmd("sb", "clcmd_box", ADMIN_IMMUNITY);
+    register_clcmd("sb_menu", "show_menu_supplybox");
+
+    // HAM ÑAM ÑAM
+    RegisterHam(Ham_Use, Button_Class, "fw_SupplyBox_Use", true);
 
     // Cvars
+    bind_pcvar_num(create_cvar("sb_grab_button", "0", FCVAR_NONE, "Only can grab the boxes with E button", true, 0.0, true, 1.0), g_vGrabButton);
     bind_pcvar_float(create_cvar("sb_spawn_time", "1.0", FCVAR_NONE, "Spawn time after load file", true, 1.0), g_vSpawnTime);
 
     g_hTrace = create_tr2();
@@ -103,22 +115,132 @@ public clcmd_box(const pPlayer)
 }
 
 /*================================================================================
+ [Menu]
+=================================================================================*/
+
+public show_menu_supplybox(const pPlayer)
+{
+    if(!is_user_connected(pPlayer))
+        return PLUGIN_HANDLED;
+
+    new hMenu = menu_create("SupplyBox^n\dby Goobay", "menu_supplybox");
+
+    menu_additem(hMenu, "Create Point \y(POS)");
+    menu_additem(hMenu, "Delete Nearly Point^n");
+
+    menu_additem(hMenu, "Save");
+    
+    menu_display(pPlayer, hMenu);
+    return PLUGIN_HANDLED;
+}
+
+public menu_supplybox(const pPlayer, const pMenu, const pKey)
+{
+    if(pKey == MENU_EXIT || !is_user_connected(pPlayer))
+    {
+        menu_destroy(pMenu);
+        return PLUGIN_HANDLED;
+    }
+
+    switch(pKey)
+    {
+        case 0:
+        {
+            Math_GetAimOrigin(pPlayer, g_vBoxOrigin[g_iBoxCount]);
+            client_print_color(pPlayer, print_team_default, "^4%s^1 Created point^4 n°%d", g_szPrefix, ++g_iBoxCount);
+        }
+        case 1:
+        {
+            new Float:fMinDistance = 999999.0;
+            new Float:fDistance;
+            new i, j, iClosest = -1;
+
+            for(i = 0; i < g_iBoxCount; i++) 
+            {
+                fDistance = get_distance_f(g_vOrigin, g_vBoxOrigin[i]);
+
+                if(fDistance < fMinDistance) 
+                {
+                    fMinDistance = fDistance;
+                    iClosest = i;
+                }
+            }
+
+            if(iClosest != -1)
+            {
+                // Shift the points to fill the gap
+                for(j = iClosest; j < g_iBoxCount - 1; j++)
+                    xs_vec_copy(g_vBoxOrigin[j], g_vBoxOrigin[j + 1]);
+
+                client_print_color(pPlayer, print_team_default, "^4%s^1 Deleted point^4 n°%d", g_szPrefix, iClosest + 1);
+                g_iBoxCount--;
+            }
+            else
+            {
+                client_print_color(pPlayer, print_team_default, "^4%s^1 There's no point nearby", g_szPrefix);
+            }
+        }
+        case 2:
+        {
+            if(Box_Save())
+                client_print_color(pPlayer, print_team_default, "^4%s^1 Config Saved", g_szPrefix);
+        }
+    }
+
+    menu_display(pPlayer, pMenu);
+    return PLUGIN_HANDLED;
+}
+
+/*================================================================================
  [Box Forwards]
 =================================================================================*/
 
 public fw_SupplyBox_Touch(const pEntity, const pToucher, const szParam[])
 {
     // Check if is a player and is alivep
-    if(!is_user_valid_alive(pToucher))
+    if(!is_user_valid_alive(pToucher) || g_vGrabButton)
         return;
 
+    Box_Grab(pEntity, pToucher);
+}
+
+public fw_SupplyBox_Use(const pEntity, pCaller, pActivator, use_type, Float:fValue)
+{
+    // Not active
+    if(!g_vGrabButton)
+        return HAM_IGNORED;
+
+    #if defined _reapi_included
+
+    // ReAPI
+    if(!FClassnameIs(pEntity, SupplyBox_Class))
+        return HAM_IGNORED;
+
+    #else
+
+    // No ReAPI
+    new szClassName[32];
+    entity_get_string(pEntity, EV_SZ_classname, szClassName, charsmax(szClassName));
+
+    if(!equal(szClassName, SupplyBox_Class))
+        return HAM_IGNORED;
+
+    #endif
+
+    // Grab Bv
+    Box_Grab(pEntity, pCaller);
+    return HAM_IGNORED;
+}
+
+public Box_Grab(const pEntity, const pPlayer)
+{
     static szMessage[124], iReward, iReturn;
     szMessage[0] = EOS;
     iReward = entity_get_int(pEntity, EV_INT_reward); // Cache reward id
     iReturn = PLUGIN_CONTINUE;
 
     // Execute the forward
-    ExecuteForward(g_fBoxAward, iReturn, pToucher, iReward, PrepareArray(szMessage, charsmax(szMessage), 1));
+    ExecuteForward(g_fBoxAward, iReturn, pPlayer, iReward, PrepareArray(szMessage, charsmax(szMessage), 1));
 
     // Can block the function with PLUGIN_HANDLED return (Maybe you don't want to delete the entity)
     if(iReturn != PLUGIN_CONTINUE)
@@ -126,7 +248,7 @@ public fw_SupplyBox_Touch(const pEntity, const pToucher, const szParam[])
 
     // Message when grab
     if(szMessage[0] != EOS)
-        client_print_color(pToucher, print_team_default, "^4%s^1 %s", g_szPrefix, szMessage);
+        client_print_color(pPlayer, print_team_default, "^4%s^1 %s", g_szPrefix, szMessage);
 
     // Grab sound
     emit_sound(pEntity, CHAN_ITEM, Box_Sound, VOL_NORM, ATTN_NORM, nullptr, PITCH_NORM);
@@ -141,7 +263,7 @@ public fw_SupplyBox_Think(const pEntity)
     entity_get_vector(pEntity, EV_VEC_origin, g_vOrigin);
 
     // Add offset
-    g_vOrigin[2] += ICON_UP_OFFSET;
+    g_vOrigin[2] += 10.0;
 
     new i;
 
@@ -151,8 +273,19 @@ public fw_SupplyBox_Think(const pEntity)
         if(!is_user_connected(i))
             continue;
 
-        // Show the icon to the player
-        Server_DrawSprite(i, g_vOrigin, g_pSupplyIcon, ICON_SCALE);
+        entity_get_vector(i, EV_VEC_origin, g_vEnd);
+
+        if(Math_WallInPoints(g_vEnd, g_vOrigin, pEntity, IGNORE_MONSTERS))
+        {
+            // Show the icon to the player
+            Server_DrawSprite(i, g_vOrigin, g_pSupplyIcon, ICON_SCALE);
+        }
+    }
+
+    if(g_vGrabButton)
+    {
+        g_vOrigin[2] += ICON_UP_OFFSET;
+        GameFX_Sprite(g_pSupplyButton, g_vOrigin, 1, 255);
     }
 
     entity_set_float(pEntity, EV_FL_nextthink, get_gametime() + 0.1);
@@ -167,7 +300,7 @@ public Box_Load()
     // Get the config directory and format it
     new szConfig[42], szPath[68];
     get_configsdir(szConfig, charsmax(szConfig));
-    formatex(szPath, charsmax(szPath), "%s/maps/%s_supply.json", szConfig, g_szCurrentMap);
+    formatex(szPath, charsmax(szPath), "%s/maps/%s_supplybox.json", szConfig, g_szCurrentMap);
 
     // If exist, try parse the file
     if(file_exists(szPath))
@@ -221,7 +354,7 @@ public Box_Load()
         // and release the parser
         json_free(jFile);
     }
-    
+
     if(g_iBoxCount)
         set_task(g_vSpawnTime, "EntityTask_SpawnBoxes", TASK_SPAWN);
 
@@ -250,8 +383,14 @@ public EntityTask_SpawnBoxes(const taskid)
 public Box_Save()
 {
     new szDirectory[24], filepath[64], szBuffer[124];
-    new JSON:jFile, JSON:jArray, JSON:jObject, i;
-    jArray = json_init_array();
+    new JSON:jFile, JSON:jObject, i;
+
+    // Parser the file if exist
+    jFile = json_parse(filepath, true);
+
+    // In case the file doesn't exist
+    if(jFile == Invalid_JSON)
+        jFile = json_init_array();
 
     // Iterate into the spawn counts
     for(i = 0; i < g_iBoxCount; i++)
@@ -262,7 +401,7 @@ public Box_Save()
 
         // Append
         jObject = json_init_object();
-        json_array_append_value(jArray, jObject);
+        json_array_append_value(jFile, jObject);
 
         // Add
         json_object_set_string(jObject, "supplybox.coords", szBuffer);
@@ -273,13 +412,6 @@ public Box_Save()
     get_configsdir(szDirectory, charsmax(szDirectory));
     formatex(filepath, charsmax(filepath), "%s/maps/%s_supplybox.json", szDirectory, g_szCurrentMap);
 
-    // Parser the file if exist
-    jFile = json_parse(filepath, true);
-
-    // In case the file doesn't exist
-    if(jFile == Invalid_JSON)
-        jFile = json_init_object();
-
     // Serialized (Save)
     json_serial_to_file(jFile, filepath, true);
     json_free(jFile);
@@ -288,7 +420,7 @@ public Box_Save()
 
 stock Entity_TryBoxSpawn(const Float:vOrigin[3], const pID)
 {
-    new pEntity = create_entity(InfoTarget_Class);
+    new pEntity = create_entity((g_vGrabButton ? Button_Class : InfoTarget_Class));
 
     if(pEntity)
     {
@@ -338,32 +470,42 @@ stock Server_DrawSprite(const pPlayer, const Float:vOrigin[3], const iSprite, co
 
 stock Math_GetAimOrigin(const pPlayer, Float:vOutput[3], const Float:fOffset = 0.0)
 {
-	// Punto de mira
-	entity_get_vector(pPlayer, EV_VEC_origin, g_vOrigin);
-	entity_get_vector(pPlayer, EV_VEC_view_ofs, g_vPlane);
+    // Punto de mira
+    entity_get_vector(pPlayer, EV_VEC_origin, g_vOrigin);
+    entity_get_vector(pPlayer, EV_VEC_view_ofs, g_vPlane);
 
-	xs_vec_add(g_vOrigin, g_vPlane, g_vStart);
+    xs_vec_add(g_vOrigin, g_vPlane, g_vStart);
 
-	entity_get_vector(pPlayer, EV_VEC_v_angle, g_vPlane);
-	angle_vector(g_vPlane, ANGLEVECTOR_FORWARD, g_vForward);
+    entity_get_vector(pPlayer, EV_VEC_v_angle, g_vPlane);
+    angle_vector(g_vPlane, ANGLEVECTOR_FORWARD, g_vForward);
 
-	// Pa adelante
-	xs_vec_add_scaled(g_vStart, g_vForward, 9999.0, g_vEnd);
+    // Pa adelante
+    xs_vec_add_scaled(g_vStart, g_vForward, 9999.0, g_vEnd);
 
-	// Trace
-	engfunc(EngFunc_TraceLine, g_vStart, g_vEnd, DONT_IGNORE_MONSTERS, pPlayer, g_hTrace);
-	get_tr2(g_hTrace, TR_vecEndPos, g_vEnd);
+    // Trace
+    engfunc(EngFunc_TraceLine, g_vStart, g_vEnd, DONT_IGNORE_MONSTERS, pPlayer, g_hTrace);
+    get_tr2(g_hTrace, TR_vecEndPos, g_vEnd);
 
-	// Add offset
-	if(fOffset > 0)
-	{
-		get_tr2(g_hTrace, TR_vecPlaneNormal, g_vOffset);
-		xs_vec_add_scaled(g_vEnd, g_vOffset, fOffset, g_vEnd);
-	}
+    // Add offset
+    if(fOffset > 0)
+    {
+        get_tr2(g_hTrace, TR_vecPlaneNormal, g_vOffset);
+        xs_vec_add_scaled(g_vEnd, g_vOffset, fOffset, g_vEnd);
+    }
 
-	vOutput = g_vEnd;
-        GameFX_DrawLaser(g_vStart[0], g_vStart[1], g_vStart[2], vOutput[0], vOutput[1], vOutput[2], {255, 255, 255}, 200);
-	return 1;
+    vOutput = g_vEnd;
+    GameFX_DrawLaser(g_vStart[0], g_vStart[1], g_vStart[2], vOutput[0], vOutput[1], vOutput[2], {255, 255, 255}, 200);
+    return 1;
+}
+
+stock Math_WallInPoints(const Float:vStart[3], const Float:vEnd[3], const pIgnore, const pTraceSize)
+{
+	engfunc(EngFunc_TraceLine, vStart, vEnd, pTraceSize, pIgnore, g_hTrace);
+
+	static Float:vEndPos[3];
+	get_tr2(g_hTrace, TR_vecEndPos, vEndPos);
+
+	return floatround(get_distance_f(vEnd, vEndPos));
 }
 
 stock GameFX_Sprite(const iSprite, const Float:vOrigin[3], const iScale, const iAlpha, const MSG_CHANNEL = MSG_PVS, const pPlayer = nullptr)
