@@ -123,7 +123,7 @@ public show_menu_supplybox(const pPlayer)
     if(!is_user_connected(pPlayer))
         return PLUGIN_HANDLED;
 
-    new hMenu = menu_create("SupplyBox^n\dby Goobay", "menu_supplybox");
+    new hMenu = menu_create("SupplyBox^n\dby Goodbay", "menu_supplybox");
 
     menu_additem(hMenu, "Create Point \y(POS)");
     menu_additem(hMenu, "Delete Nearly Point^n");
