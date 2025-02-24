@@ -1,1 +1,1 @@
-- This one replaces shity one of Dias
+#This replaces Dias shitty plugin
