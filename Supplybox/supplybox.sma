@@ -428,7 +428,7 @@ public Box_Spawn_Coords()
     for(; i < g_iBoxCount; i++)
     {
         // Try spawn
-        if(Entity_TryBoxSpawn(g_vBoxOrigin[i], g_pBoxReward[i]) && Enable_Logs)
+        if(Entity_TryBoxSpawn(g_vBoxOrigin[i], random_num(1, MAX_REWARD_PERCENT)) && Enable_Logs)
         {
             // Logs
             server_print("Box spawned in: %.2f %.2f %.2f", g_vBoxOrigin[i][0], g_vBoxOrigin[i][1], g_vBoxOrigin[i][2]);
