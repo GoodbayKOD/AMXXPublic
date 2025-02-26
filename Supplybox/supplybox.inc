@@ -28,4 +28,4 @@ forward SupplyBox_OnAward(const pPlayer, iReward, szMessage[124]);
  *
 */
 
-native Supplybox_TrySpawn(const Float:vOrigin[]);
+native Supplybox_TrySpawn(const Float:vOrigin[], const iReward);
