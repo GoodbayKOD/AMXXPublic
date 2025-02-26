@@ -32,10 +32,11 @@ const Float:ICON_UP_OFFSET = 12.0;
 const Float:ICON_SCALE = 1.2;
 
 // Resources
-new const Box_Model[] = "models/gkod/supplybox.mdl";
-new const Box_Sprite_Icon[] = "sprites/gkod/icon_supplybox.spr";
-new const Box_Sprite_Button[] = "sprites/gkod/e_button.spr";
-new const Box_Sound[] = "gkod/supplybox_pickup.wav";
+new const Box_Model[]           = "models/gkod/supplybox.mdl";
+new const Box_Sprite_Icon[]     = "sprites/gkod/icon_supplybox.spr";
+new const Box_Sprite_Button[]   = "sprites/gkod/e_button.spr";
+new const Box_Sound_Pickup[]    = "gkod/supplybox_pickup.wav";
+new const Box_Sound_Arrive[]    = "gkod/supplybox_arrive.wav";
 
 // Box related
 new Float:g_vBoxOrigin[MAX_SUPPLY][3], g_pBoxReward[MAX_SUPPLY];
@@ -59,9 +60,17 @@ new g_hTrace;
 // Sprite
 new g_pSupplyIcon, g_pSupplyButton, g_pLaserBeam;
 
+// Message ID's
+new g_msgTextMsg;
+
 /*================================================================================
  [Plugin Data]
 =================================================================================*/
+
+public plugin_natives()
+{
+    register_native("Supplybox_TrySpawn", "native_supplybox_spawn");
+}
 
 public plugin_precache()
 {
@@ -69,18 +78,17 @@ public plugin_precache()
     get_mapname(g_szCurrentMap, charsmax(g_szCurrentMap));
     strtolower(g_szCurrentMap);
 
-    // Try load the file data
-    Box_Load();
-
     // Precache resources
     g_pSupplyIcon   = precache_model(Box_Sprite_Icon);
     g_pSupplyButton = precache_model(Box_Sprite_Button);
     g_pLaserBeam    = precache_model("sprites/laserbeam.spr");
 
     precache_model(Box_Model)
-    precache_sound(Box_Sound);
 
-    // Forwards
+    precache_sound(Box_Sound_Pickup);
+    precache_sound(Box_Sound_Arrive);
+
+    // Forwardsp
     // SupplyBox_OnAward(const pPlayer, iReward, szMessage[]);
     g_fBoxAward = CreateMultiForward("SupplyBox_OnAward", ET_CONTINUE, FP_CELL, FP_CELL, FP_ARRAY);
 }
@@ -97,10 +105,17 @@ public plugin_init()
     // HAM ÑAM ÑAM
     RegisterHam(Ham_Use, Button_Class, "fw_SupplyBox_Use", true);
 
+    new pGrab;
+
     // Cvars
-    bind_pcvar_num(create_cvar("sb_grab_button", "0", FCVAR_NONE, "Only can grab the boxes with E button", true, 0.0, true, 1.0), g_vGrabButton);
+    bind_pcvar_num((pGrab = create_cvar("sb_grab_button", "0", FCVAR_NONE, "Only can grab the boxes with E button", true, 0.0, true, 1.0)), g_vGrabButton);
+    hook_cvar_change(pGrab, "cvar_grab_button");
     bind_pcvar_float(create_cvar("sb_spawn_time", "1.0", FCVAR_NONE, "Spawn time after load file", true, 1.0), g_vSpawnTime);
 
+    // Try load the file data
+    Box_Load();
+
+    g_msgTextMsg = get_user_msgid("TextMsg");
     g_hTrace = create_tr2();
 }
 
@@ -112,6 +127,19 @@ public clcmd_box(const pPlayer)
 {
     Math_GetAimOrigin(pPlayer, g_vOrigin, 32.0);
     Entity_TryBoxSpawn(g_vOrigin, random_num(0, 12));
+}
+
+/*================================================================================
+ [CVar Hooks]
+=================================================================================*/
+
+public cvar_grab_button(pCvar, const szOldValue[], const szNewValue[])
+{
+    if(!g_iBoxCount)
+        return; 
+
+    remove_entity_name(SupplyBox_Class);
+    Box_Spawn_Coords();
 }
 
 /*================================================================================
@@ -210,22 +238,9 @@ public fw_SupplyBox_Use(const pEntity, pCaller, pActivator, use_type, Float:fVal
     if(!g_vGrabButton)
         return HAM_IGNORED;
 
-    #if defined _reapi_included
-
-    // ReAPI
+    // Check classname
     if(!FClassnameIs(pEntity, SupplyBox_Class))
         return HAM_IGNORED;
-
-    #else
-
-    // No ReAPI
-    new szClassName[32];
-    entity_get_string(pEntity, EV_SZ_classname, szClassName, charsmax(szClassName));
-
-    if(!equal(szClassName, SupplyBox_Class))
-        return HAM_IGNORED;
-
-    #endif
 
     // Grab Bv
     Box_Grab(pEntity, pCaller);
@@ -251,7 +266,7 @@ public Box_Grab(const pEntity, const pPlayer)
         client_print_color(pPlayer, print_team_default, "^4%s^1 %s", g_szPrefix, szMessage);
 
     // Grab sound
-    emit_sound(pEntity, CHAN_ITEM, Box_Sound, VOL_NORM, ATTN_NORM, nullptr, PITCH_NORM);
+    emit_sound(pEntity, CHAN_ITEM, Box_Sound_Pickup, VOL_NORM, ATTN_NORM, nullptr, PITCH_NORM);
     remove_entity(pEntity);
 }
 
@@ -265,7 +280,7 @@ public fw_SupplyBox_Think(const pEntity)
     // Add offset
     g_vOrigin[2] += 10.0;
 
-    new i;
+    static i;
 
     for(i = 1; i <= g_pMaxPlayers; i++)
     {
@@ -356,28 +371,13 @@ public Box_Load()
     }
 
     if(g_iBoxCount)
-        set_task(g_vSpawnTime, "EntityTask_SpawnBoxes", TASK_SPAWN);
+        set_task(g_vSpawnTime, "Box_Spawn_Coords", TASK_SPAWN);
 
     #if Enable_Logs
         log_amx("Loaded Supplybox Spawns: %d", g_iBoxCount);
     #endif
 
     return 1;
-}
-
-public EntityTask_SpawnBoxes(const taskid)
-{
-    new i;
-
-    for(; i < g_iBoxCount; i++)
-    {
-        // Try spawn
-        if(Entity_TryBoxSpawn(g_vBoxOrigin[i], g_pBoxReward[i]) && Enable_Logs)
-        {
-            // Logs
-            server_print("Box spawned in: %.2f %.2f %.2f", g_vBoxOrigin[i][0], g_vBoxOrigin[i][1], g_vBoxOrigin[i][2]);
-        }
-    }
 }
 
 public Box_Save()
@@ -417,6 +417,45 @@ public Box_Save()
     json_free(jFile);
     return true;
 }
+
+public Box_Spawn_Coords()
+{
+    // Arrive sound
+    client_cmd(nullptr, "spk ^"%s^"", Box_Sound_Arrive);
+
+    new i;
+
+    for(; i < g_iBoxCount; i++)
+    {
+        // Try spawn
+        if(Entity_TryBoxSpawn(g_vBoxOrigin[i], g_pBoxReward[i]) && Enable_Logs)
+        {
+            // Logs
+            server_print("Box spawned in: %.2f %.2f %.2f", g_vBoxOrigin[i][0], g_vBoxOrigin[i][1], g_vBoxOrigin[i][2]);
+        }
+    }
+
+    client_print_center(nullptr, "Supplybox Arrive !!");
+}
+
+/*================================================================================
+ [Natives]
+=================================================================================*/
+
+public native_supplybox_spawn(const pPluginID, const iParams)
+{
+    new Float:vOrigin[3];
+    get_array_f(1, vOrigin, 3);
+    
+    if(Entity_TryBoxSpawn(vOrigin, get_param(2)))
+        return true;
+
+    return false;
+}
+
+/*================================================================================
+ [Stocks]
+=================================================================================*/
 
 stock Entity_TryBoxSpawn(const Float:vOrigin[3], const pID)
 {
@@ -464,6 +503,7 @@ stock Server_DrawSprite(const pPlayer, const Float:vOrigin[3], const iSprite, co
 	xs_vec_mul_scalar(g_vGoal, fDistance, g_vGoal);
 	xs_vec_add(g_vStart, g_vGoal, g_vEnd);
 
+    // Draw sprite
 	GameFX_Sprite(iSprite, g_vEnd, floatround(2.0 * floatmax(fDistance / xs_vec_distance(g_vStart, vOrigin), 0.5) * fScale), 255, MSG_PVS, pPlayer);
 	return true;
 }
@@ -544,6 +584,28 @@ stock GameFX_DrawLaser(Float:vStart1, Float:vStart2, Float:vStart3, Float:vEnd1,
 	write_byte(10)		// scroll speed in 0.1's
 	message_end()
 }
+
+// Fix para los babosos ns
+stock client_print_center(const pPlayer, const szMessage[], any:...)
+{
+    new szFormat[512];
+    vformat(szFormat, charsmax(szFormat), szMessage, 3);
+
+    message_begin(!pPlayer ? MSG_BROADCAST : MSG_ONE_UNRELIABLE, g_msgTextMsg, .player = pPlayer);
+    write_byte(print_center);
+    write_string(szFormat);
+    message_end();
+}
+
+#if !defined _reapi_included
+stock bool:FClassnameIs(const entityIndex, const className[])
+{
+    new entityClass[32];
+    entity_get_string(pEntity, EV_SZ_classname, entityClass, charsmax(entityClass));
+
+    return (equal(entityClass, className));
+}
+#endif
 
 public plugin_end()
 {
