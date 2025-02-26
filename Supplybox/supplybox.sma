@@ -597,16 +597,6 @@ stock client_print_center(const pPlayer, const szMessage[], any:...)
     message_end();
 }
 
-#if !defined _reapi_included
-stock bool:FClassnameIs(const entityIndex, const className[])
-{
-    new entityClass[32];
-    entity_get_string(pEntity, EV_SZ_classname, entityClass, charsmax(entityClass));
-
-    return (equal(entityClass, className));
-}
-#endif
-
 public plugin_end()
 {
     free_tr2(g_hTrace);
