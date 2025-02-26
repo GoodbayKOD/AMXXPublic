@@ -9,8 +9,7 @@ API:
  * @param iReward		Box reward (random_num(1, MAX_REWARD_PERCENT))
  * @param szMessage		Message in print when grab the box
  *
- * @return 				PLUGIN_CONTINUE function will continue
- *                  	PLUGIN_HANDLED or higher to block print, message, sound and entity remove
+ * @return 				PLUGIN_CONTINUE function will continue, PLUGIN_HANDLED or higher to block print, message, sound and entity remove
  *
 */
 forward SupplyBox_OnAward(const pPlayer, iReward, szMessage[124]);
