@@ -27,5 +27,4 @@ forward SupplyBox_OnAward(const pPlayer, iReward, szMessage[124]);
  * @return 			True if the entity spawned, false otherwise
  *
 */
-
 native Supplybox_TrySpawn(const Float:vOrigin[], const iReward);
