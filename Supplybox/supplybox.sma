@@ -5,9 +5,10 @@
 #include <engine>
 #include <fakemeta>
 #include <json>
-#include <reapi>
 #include <xs>
+#include <supplybox>
 
+#define Enable_Reapi        false
 #define Enable_Logs         true
 #define nullptr             0
 
@@ -23,9 +24,6 @@
 // Macros
 #define is_user_valid_alive(%1)			(1 <= %1 <= g_pMaxPlayers && is_user_alive(%1))
 
-// Box constants
-const EV_INT_reward = EV_INT_iuser1;
-
 // Constant values
 const MAX_SUPPLY = 50; // Max supply in map
 const Float:ICON_UP_OFFSET = 12.0;
@@ -38,8 +36,22 @@ new const Box_Sprite_Button[]   = "sprites/gkod/e_button.spr";
 new const Box_Sound_Pickup[]    = "gkod/supplybox_pickup.wav";
 new const Box_Sound_Arrive[]    = "gkod/supplybox_arrive.wav";
 
+// Submodel stuff
+new const Box_Names[m_SupplyBoxBody][] =
+{
+    "Normal",
+    "Halloween",
+    "Military",
+    "New Year",
+    "Purple",
+    "Xmas",
+    "Orange",
+    "Cone"
+}
+new g_iBoxSelected;
+
 // Box related
-new Float:g_vBoxOrigin[MAX_SUPPLY][3], g_pBoxReward[MAX_SUPPLY];
+new Float:g_vBoxOrigin[MAX_SUPPLY][3], g_pBoxBody[MAX_SUPPLY];
 new g_iBoxCount;
 
 // Current Map Name
@@ -63,6 +75,10 @@ new g_pSupplyIcon, g_pSupplyButton, g_pLaserBeam;
 // Message ID's
 new g_msgTextMsg;
 
+#if Enable_Reapi
+#include <reapi>
+#endif
+
 /*================================================================================
  [Plugin Data]
 =================================================================================*/
@@ -83,12 +99,11 @@ public plugin_precache()
     g_pSupplyButton = precache_model(Box_Sprite_Button);
     g_pLaserBeam    = precache_model("sprites/laserbeam.spr");
 
-    precache_model(Box_Model)
-
+    precache_model(Box_Model);
     precache_sound(Box_Sound_Pickup);
     precache_sound(Box_Sound_Arrive);
 
-    // Forwardsp
+    // Forwards
     // SupplyBox_OnAward(const pPlayer, iReward, szMessage[]);
     g_fBoxAward = CreateMultiForward("SupplyBox_OnAward", ET_CONTINUE, FP_CELL, FP_CELL, FP_ARRAY);
 }
@@ -114,6 +129,12 @@ public plugin_init()
 
     // Try load the file data
     Box_Load();
+
+    // Think in case of not use reapi
+    #if !defined _reapi_included
+        register_think(SupplyBox_Class, "fw_SupplyBox_Think");
+        register_touch(SupplyBox_Class, "*", "fw_SupplyBox_Touch");
+    #endif
 
     g_msgTextMsg = get_user_msgid("TextMsg");
     g_hTrace = create_tr2();
@@ -151,7 +172,10 @@ public show_menu_supplybox(const pPlayer)
     if(!is_user_connected(pPlayer))
         return PLUGIN_HANDLED;
 
-    new hMenu = menu_create("SupplyBox^n\dby Goodbay", "menu_supplybox");
+    new hMenu = menu_create("SupplyBox^n\dby Goodbay", "menu_supplybox"), szMenu[24];
+
+    formatex(szMenu, charsmax(szMenu), "Box Type:\y %s", Box_Names[g_iBoxSelected]);
+    menu_additem(hMenu, szMenu);
 
     menu_additem(hMenu, "Create Point \y(POS)");
     menu_additem(hMenu, "Delete Nearly Point^n");
@@ -174,26 +198,71 @@ public menu_supplybox(const pPlayer, const pMenu, const pKey)
     {
         case 0:
         {
-            Math_GetAimOrigin(pPlayer, g_vBoxOrigin[g_iBoxCount]);
-            client_print_color(pPlayer, print_team_default, "^4%s^1 Created point^4 n°%d", g_szPrefix, ++g_iBoxCount);
+            static i, iCurrentBox, iNextBox, iMaxBoxes;
+            iCurrentBox 	= g_iBoxSelected;
+            iNextBox 		= iCurrentBox;
+            iMaxBoxes       = sizeof(Box_Names);
+            
+            for(i = iCurrentBox + 1; i <= iMaxBoxes; i++)
+            {
+                // Restart
+                if(i >= iMaxBoxes)
+                    i = nullptr;
+
+                // Break if do a circle
+                if(iCurrentBox == i)
+                    break;
+
+                iNextBox = i;
+                break;
+            }
+
+            // No changes if is the same
+            if(iNextBox != iCurrentBox)
+            {
+                menu_destroy(pMenu);
+
+                // Save next
+                g_pBoxBody[g_iBoxCount] = g_iBoxSelected = iNextBox;
+                client_print_color(pPlayer, print_team_default, "^4%s^1 Box type is:^3 %s", g_szPrefix, Box_Names[iNextBox]);
+
+                show_menu_supplybox(pPlayer)
+                return PLUGIN_HANDLED; 
+            }
         }
         case 1:
+        {
+            // Get the aim end trace from the player and save it in the array
+            Math_GetAimOrigin(pPlayer, g_vBoxOrigin[g_iBoxCount]);
+            client_print_color(pPlayer, print_team_default, "^4%s^1 Created point^4 n°%d", g_szPrefix, ++g_iBoxCount);
+
+            // Update
+            g_pBoxBody[g_iBoxCount] = g_iBoxSelected;
+        }
+        case 2:
         {
             new Float:fMinDistance = 999999.0;
             new Float:fDistance;
             new i, j, iClosest = -1;
 
+            entity_get_vector(pPlayer, EV_VEC_origin, g_vOrigin);
+
+            // Iter in the box count
             for(i = 0; i < g_iBoxCount; i++) 
             {
+                // Get the distance between player origin and box origin
                 fDistance = get_distance_f(g_vOrigin, g_vBoxOrigin[i]);
 
+                // The distance obtained is less than the declared
                 if(fDistance < fMinDistance) 
                 {
+                    // Update the minimum
                     fMinDistance = fDistance;
                     iClosest = i;
                 }
             }
 
+            // Only if a point was scored
             if(iClosest != -1)
             {
                 // Shift the points to fill the gap
@@ -201,17 +270,24 @@ public menu_supplybox(const pPlayer, const pMenu, const pKey)
                     xs_vec_copy(g_vBoxOrigin[j], g_vBoxOrigin[j + 1]);
 
                 client_print_color(pPlayer, print_team_default, "^4%s^1 Deleted point^4 n°%d", g_szPrefix, iClosest + 1);
+
+                // Decreased
                 g_iBoxCount--;
             }
             else
             {
+                // No point created
                 client_print_color(pPlayer, print_team_default, "^4%s^1 There's no point nearby", g_szPrefix);
             }
         }
-        case 2:
+        case 3:
         {
+            // Save the box coords
             if(Box_Save())
+            {
+                // A print if the save work correctly
                 client_print_color(pPlayer, print_team_default, "^4%s^1 Config Saved", g_szPrefix);
+            }
         }
     }
 
@@ -249,13 +325,12 @@ public fw_SupplyBox_Use(const pEntity, pCaller, pActivator, use_type, Float:fVal
 
 public Box_Grab(const pEntity, const pPlayer)
 {
-    static szMessage[124], iReward, iReturn;
+    static szMessage[124], iReturn;
     szMessage[0] = EOS;
-    iReward = entity_get_int(pEntity, EV_INT_reward); // Cache reward id
     iReturn = PLUGIN_CONTINUE;
 
     // Execute the forward
-    ExecuteForward(g_fBoxAward, iReturn, pPlayer, iReward, PrepareArray(szMessage, charsmax(szMessage), 1));
+    ExecuteForward(g_fBoxAward, iReturn, pPlayer, random_num(1, MAX_REWARD_PERCENT), PrepareArray(szMessage, charsmax(szMessage), 1));
 
     // Can block the function with PLUGIN_HANDLED return (Maybe you don't want to delete the entity)
     if(iReturn != PLUGIN_CONTINUE)
@@ -275,12 +350,13 @@ public fw_SupplyBox_Think(const pEntity)
     if(!is_valid_ent(pEntity))
         return;
 
+    static i, Float:fGameTime;
+    fGameTime = get_gametime();
+
     entity_get_vector(pEntity, EV_VEC_origin, g_vOrigin);
 
     // Add offset
     g_vOrigin[2] += 10.0;
-
-    static i;
 
     for(i = 1; i <= g_pMaxPlayers; i++)
     {
@@ -297,13 +373,15 @@ public fw_SupplyBox_Think(const pEntity)
         }
     }
 
+    // E button option
     if(g_vGrabButton)
     {
+        // Add the offset
         g_vOrigin[2] += ICON_UP_OFFSET;
         GameFX_Sprite(g_pSupplyButton, g_vOrigin, 1, 255);
     }
 
-    entity_set_float(pEntity, EV_FL_nextthink, get_gametime() + 0.1);
+    entity_set_float(pEntity, EV_FL_nextthink, fGameTime + 0.1);
 }
 
 /*================================================================================
@@ -352,7 +430,7 @@ public Box_Load()
             g_vBoxOrigin[g_iBoxCount][2] = str_to_float(szPosition[2]);
 
             // Get the reward id and free the object
-            g_pBoxReward[g_iBoxCount] = json_object_get_number(jObject, "supplybox.reward.id");
+            g_pBoxBody[g_iBoxCount] = json_object_get_number(jObject, "supplybox.body");
             json_free(jObject);
             
             // Max Reached
@@ -370,6 +448,7 @@ public Box_Load()
         json_free(jFile);
     }
 
+    // If loaded a point, make spawn
     if(g_iBoxCount)
         set_task(g_vSpawnTime, "Box_Spawn_Coords", TASK_SPAWN);
 
@@ -405,7 +484,7 @@ public Box_Save()
 
         // Add
         json_object_set_string(jObject, "supplybox.coords", szBuffer);
-        json_object_set_number(jObject, "supplybox.reward.id", g_pBoxReward[i]);
+        json_object_set_number(jObject, "supplybox.body", g_pBoxBody[i]);
     }
 
     // Format the path
@@ -420,21 +499,20 @@ public Box_Save()
 
 public Box_Spawn_Coords()
 {
-    // Arrive sound
-    client_cmd(nullptr, "spk ^"%s^"", Box_Sound_Arrive);
-
     new i;
 
     for(; i < g_iBoxCount; i++)
     {
         // Try spawn
-        if(Entity_TryBoxSpawn(g_vBoxOrigin[i], random_num(1, MAX_REWARD_PERCENT)) && Enable_Logs)
+        if(Entity_TryBoxSpawn(g_vBoxOrigin[i], g_pBoxBody[i]) && Enable_Logs)
         {
             // Logs
             server_print("Box spawned in: %.2f %.2f %.2f", g_vBoxOrigin[i][0], g_vBoxOrigin[i][1], g_vBoxOrigin[i][2]);
         }
     }
 
+    // Arrive sound & print
+    client_cmd(nullptr, "spk ^"%s^"", Box_Sound_Arrive);
     client_print_center(nullptr, "Supplybox Arrive !!");
 }
 
@@ -457,7 +535,7 @@ public native_supplybox_spawn(const pPluginID, const iParams)
  [Stocks]
 =================================================================================*/
 
-stock Entity_TryBoxSpawn(const Float:vOrigin[3], const pID)
+stock Entity_TryBoxSpawn(const Float:vOrigin[3], const iBody)
 {
     new pEntity = create_entity((g_vGrabButton ? Button_Class : InfoTarget_Class));
 
@@ -471,11 +549,13 @@ stock Entity_TryBoxSpawn(const Float:vOrigin[3], const pID)
 
         entity_set_origin(pEntity, vOrigin);
 
-        entity_set_int(pEntity, EV_INT_reward, pID);
+        entity_set_int(pEntity, EV_INT_body, iBody);
         entity_set_float(pEntity, EV_FL_nextthink, get_gametime() + 0.1);
 
-        SetTouch(pEntity, "fw_SupplyBox_Touch");
-        SetThink(pEntity, "fw_SupplyBox_Think");
+        #if defined _reapi_included
+            SetTouch(pEntity, "fw_SupplyBox_Touch");
+            SetThink(pEntity, "fw_SupplyBox_Think");
+        #endif
     }
 
     return pEntity;
@@ -510,7 +590,7 @@ stock Server_DrawSprite(const pPlayer, const Float:vOrigin[3], const iSprite, co
 
 stock Math_GetAimOrigin(const pPlayer, Float:vOutput[3], const Float:fOffset = 0.0)
 {
-    // Punto de mira
+    // Point of sight
     entity_get_vector(pPlayer, EV_VEC_origin, g_vOrigin);
     entity_get_vector(pPlayer, EV_VEC_view_ofs, g_vPlane);
 
@@ -519,7 +599,7 @@ stock Math_GetAimOrigin(const pPlayer, Float:vOutput[3], const Float:fOffset = 0
     entity_get_vector(pPlayer, EV_VEC_v_angle, g_vPlane);
     angle_vector(g_vPlane, ANGLEVECTOR_FORWARD, g_vForward);
 
-    // Pa adelante
+    // To forward
     xs_vec_add_scaled(g_vStart, g_vForward, 9999.0, g_vEnd);
 
     // Trace
@@ -585,7 +665,7 @@ stock GameFX_DrawLaser(Float:vStart1, Float:vStart2, Float:vStart3, Float:vEnd1,
 	message_end()
 }
 
-// Fix para los babosos ns
+// Fix for the nosteam Bv
 stock client_print_center(const pPlayer, const szMessage[], any:...)
 {
     new szFormat[512];
@@ -596,6 +676,16 @@ stock client_print_center(const pPlayer, const szMessage[], any:...)
     write_string(szFormat);
     message_end();
 }
+
+#if !defined _reapi_included
+stock bool:FClassnameIs(const entityIndex, const className[])
+{
+    new entityClass[32];
+    entity_get_string(entityIndex, EV_SZ_classname, entityClass, charsmax(entityClass));
+
+    return bool:(equal(entityClass, className));
+}
+#endif
 
 public plugin_end()
 {
