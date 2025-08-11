@@ -84,6 +84,7 @@ public fw_CmdStart_Post(const pPlayer, uc_handle)
             return FMRES_IGNORED;
 
         new iAnim, Float:fDelay;
+		entity_get_vector(pPlayer, EV_VEC_angles, g_vPlane);
 
         if(iButton & IN_BACK)
         {
@@ -91,7 +92,6 @@ public fw_CmdStart_Post(const pPlayer, uc_handle)
             fDelay = 0.8;
 
             // Pa tra
-            entity_get_vector(pPlayer, EV_VEC_angles, g_vPlane);
             Math_Dash(pPlayer, g_vPlane, -DASH_VALUE);
         }
         else if(iButton & IN_FORWARD)
@@ -100,7 +100,6 @@ public fw_CmdStart_Post(const pPlayer, uc_handle)
             fDelay = 0.8;
 
             // Pa delante
-            entity_get_vector(pPlayer, EV_VEC_angles, g_vPlane);
             Math_Dash(pPlayer, g_vPlane, DASH_VALUE);
         }
         else if(iButton & IN_MOVERIGHT)
@@ -109,7 +108,6 @@ public fw_CmdStart_Post(const pPlayer, uc_handle)
             fDelay = 0.8;
 
             // Pal lao
-            entity_get_vector(pPlayer, EV_VEC_angles, g_vPlane);
             g_vPlane[1] -= 90.0;
             Math_Dash(pPlayer, g_vPlane, DASH_VALUE);
         }
@@ -119,7 +117,6 @@ public fw_CmdStart_Post(const pPlayer, uc_handle)
             fDelay = 1.0;
 
             // Pal otro lao
-            entity_get_vector(pPlayer, EV_VEC_angles, g_vPlane);
             g_vPlane[1] += 90.0;
             Math_Dash(pPlayer, g_vPlane, DASH_VALUE);
         }
