@@ -83,53 +83,55 @@ public fw_CmdStart_Post(const pPlayer, uc_handle)
         if(g_fNextDash[pPlayer] >= (fGameTime = get_gametime()))
             return FMRES_IGNORED;
 
-        new iAnim, Float:fDelay;
 		entity_get_vector(pPlayer, EV_VEC_angles, g_vPlane);
 
+        new iAnim, Float:fDelay, Float:fSpeed;
+		fDelay = 0.8;
+		fSpeed = DASH_VALUE;
+
+        // Pa tra
         if(iButton & IN_BACK)
         {
             iAnim = Anim_Back;
-            fDelay = 0.8;
-
-            // Pa tra
-            Math_Dash(pPlayer, g_vPlane, -DASH_VALUE);
+			fSpeed = -fSpeed;
         }
+        // Pa delante
         else if(iButton & IN_FORWARD)
         {
             iAnim = Anim_Forward;
-            fDelay = 0.8;
-
-            // Pa delante
-            Math_Dash(pPlayer, g_vPlane, DASH_VALUE);
         }
+        // Pal lao
         else if(iButton & IN_MOVERIGHT)
         {
             iAnim = Anim_Right;
-            fDelay = 0.8;
-
-            // Pal lao
             g_vPlane[1] -= 90.0;
-            Math_Dash(pPlayer, g_vPlane, DASH_VALUE);
         }
+        // Pal otro lao
         else if(iButton & IN_MOVELEFT)
         {
             iAnim = Anim_Left;
             fDelay = 1.0;
 
-            // Pal otro lao
             g_vPlane[1] += 90.0;
-            Math_Dash(pPlayer, g_vPlane, DASH_VALUE);
         }
 
-        set_pdata_float(pPlayer, m_flNextAttack, fDelay);
-        entity_set_string(pPlayer, EV_SZ_viewmodel, Dash_Model);
+		// Apply dash
+		Math_Dash(pPlayer, g_vPlane, fSpeed);
 
-        Player_WeaponAnim(pPlayer, iAnim);
+		// Model with anim
+		if(file_exist(Dash_Model))
+		{
+			set_pdata_float(pPlayer, m_flNextAttack, fDelay);
+        	entity_set_string(pPlayer, EV_SZ_viewmodel, Dash_Model);
+
+			remove_task(TASK_REMOVE + pPlayer);
+        	set_task(fDelay, "Player_RemoveModel", TASK_REMOVE + pPlayer);
+
+        	Player_WeaponAnim(pPlayer, iAnim);
+		}
+
+		// Sound & update delay
         Player_PlayMP3(pPlayer, Dash_Sound);
-
-        remove_task(TASK_REMOVE + pPlayer);
-        set_task(fDelay, "Player_RemoveModel", TASK_REMOVE + pPlayer);
-
         g_fNextDash[pPlayer] = fGameTime + DASH_DELAY;
     }
 
