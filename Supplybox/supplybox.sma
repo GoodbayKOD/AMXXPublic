@@ -391,7 +391,7 @@ public fw_SupplyBox_Think(const pEntity)
 public Box_Load()
 {
     // Get the config directory and format it
-    new szConfig[42], szPath[68];
+    new szConfig[42], szPath[127];
     get_configsdir(szConfig, charsmax(szConfig));
     formatex(szPath, charsmax(szPath), "%s/maps/%s_supplybox.json", szConfig, g_szCurrentMap);
 
