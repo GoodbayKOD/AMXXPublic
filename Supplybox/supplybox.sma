@@ -461,7 +461,7 @@ public Box_Load()
 
 public Box_Save()
 {
-    new szDirectory[24], filepath[64], szBuffer[124];
+    new szDirectory[24], filepath[127], szBuffer[124];
     new JSON:jFile, JSON:jObject, i;
 
     // Parser the file if exist
